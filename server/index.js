@@ -154,34 +154,76 @@ const OUI_DB = {
 };
 
 // ─────────────────────────────────────────────
-// Busca en la DB por los primeros 3 octetos de la MAC
+// Busca en la DB local primero, luego API online
 // ─────────────────────────────────────────────
-function identificarDispositivo(mac) {
+function identificarLocal(mac) {
+  if (!mac || mac === 'N/A') return null;
+  const macNorm = mac.toUpperCase().replace(/-/g, ':');
+  const oui = macNorm.substring(0, 8);
+  if (OUI_DB[oui]) return OUI_DB[oui];
+  // Intento parcial con 2 octetos
+  const oui2 = macNorm.substring(0, 5);
+  for (const [key, val] of Object.entries(OUI_DB)) {
+    if (key.startsWith(oui2)) return val;
+  }
+  return null;
+}
+
+// Deduce tipo e icono a partir del nombre del fabricante (para resultados de la API)
+function deducirTipo(fabricante) {
+  const f = fabricante.toLowerCase();
+  if (f.includes('apple'))                          return { tipo: 'Apple',        icono: '🍎' };
+  if (f.includes('samsung'))                        return { tipo: 'Samsung',      icono: '📱' };
+  if (f.includes('huawei'))                         return { tipo: 'Router/Móvil', icono: '📡' };
+  if (f.includes('xiaomi'))                         return { tipo: 'Smartphone',   icono: '📱' };
+  if (f.includes('intel'))                          return { tipo: 'PC / Laptop',  icono: '💻' };
+  if (f.includes('dell'))                           return { tipo: 'Laptop / PC',  icono: '💻' };
+  if (f.includes('hewlett') || f.includes('hp '))   return { tipo: 'HP',           icono: '💻' };
+  if (f.includes('lenovo'))                         return { tipo: 'Laptop',       icono: '💻' };
+  if (f.includes('asus'))                           return { tipo: 'ASUS',         icono: '💻' };
+  if (f.includes('tp-link') || f.includes('tplink'))return { tipo: 'Router',       icono: '📡' };
+  if (f.includes('netgear'))                        return { tipo: 'Router',       icono: '📡' };
+  if (f.includes('d-link') || f.includes('dlink'))  return { tipo: 'Router',       icono: '📡' };
+  if (f.includes('cisco'))                          return { tipo: 'Switch/Router', icono: '📡' };
+  if (f.includes('google'))                         return { tipo: 'Google',       icono: '📺' };
+  if (f.includes('amazon'))                         return { tipo: 'Amazon',       icono: '🔊' };
+  if (f.includes('sony'))                           return { tipo: 'Sony',         icono: '📺' };
+  if (f.includes('lg elect'))                       return { tipo: 'Smart TV',     icono: '📺' };
+  if (f.includes('nintendo'))                       return { tipo: 'Consola',      icono: '🎮' };
+  if (f.includes('raspberry'))                      return { tipo: 'Raspberry Pi', icono: '🍓' };
+  if (f.includes('vmware') || f.includes('virtual'))return { tipo: 'VM',           icono: '🖥️' };
+  if (f.includes('espressif'))                      return { tipo: 'IoT / ESP',    icono: '🔌' };
+  if (f.includes('realtek'))                        return { tipo: 'PC / Laptop',  icono: '💻' };
+  if (f.includes('broadcom'))                       return { tipo: 'PC / Laptop',  icono: '💻' };
+  return { tipo: 'Dispositivo', icono: '🖥️' };
+}
+
+// Consulta la API pública de macvendors.com (sin API key, 1000 req/día gratis)
+async function lookupMacOnline(mac) {
+  try {
+    const oui = mac.toUpperCase().replace(/-/g, ':').substring(0, 8);
+    const res = await fetch(`https://api.macvendors.com/${oui}`, { signal: AbortSignal.timeout(3000) });
+    if (!res.ok) return null;
+    const fabricante = (await res.text()).trim();
+    if (!fabricante || fabricante.includes('errors')) return null;
+    const { tipo, icono } = deducirTipo(fabricante);
+    return { marca: fabricante, tipo, icono, nombre: `${fabricante} (${tipo})` };
+  } catch {
+    return null;
+  }
+}
+
+async function identificarDispositivo(mac) {
   if (!mac || mac === 'N/A') {
     return { marca: 'Desconocido', tipo: 'Dispositivo', icono: '❓', nombre: 'Dispositivo Desconocido' };
   }
+  // 1. Buscar en DB local (instantáneo)
+  const local = identificarLocal(mac);
+  if (local) return { marca: local.marca, tipo: local.tipo, icono: local.icono, nombre: `${local.marca} ${local.tipo}` };
 
-  // Normalizar MAC a mayúsculas con ':'
-  const macNorm = mac.toUpperCase().replace(/-/g, ':');
-  const oui = macNorm.substring(0, 8); // ej: 'A4:C3:F0'
-
-  const info = OUI_DB[oui];
-  if (info) {
-    return {
-      marca: info.marca,
-      tipo: info.tipo,
-      icono: info.icono,
-      nombre: `${info.marca} ${info.tipo}`,
-    };
-  }
-
-  // Fallback: intentar con solo los primeros 2 octetos para marcas conocidas
-  const oui2 = macNorm.substring(0, 5);
-  for (const [key, val] of Object.entries(OUI_DB)) {
-    if (key.startsWith(oui2)) {
-      return { marca: val.marca, tipo: val.tipo, icono: val.icono, nombre: `${val.marca} ${val.tipo}` };
-    }
-  }
+  // 2. Consultar API online como fallback
+  const online = await lookupMacOnline(mac);
+  if (online) return online;
 
   return { marca: 'Desconocido', tipo: 'Dispositivo de Red', icono: '🖥️', nombre: 'Dispositivo de Red' };
 }
@@ -249,7 +291,7 @@ app.get('/api/dispositivos', async (req, res) => {
       const mac = await getMac(ip);
       const info = ip === myIp
         ? { marca: 'Este Equipo', tipo: 'Tu PC', icono: '🖥️', nombre: 'Este Equipo (Tú)' }
-        : identificarDispositivo(mac);
+        : await identificarDispositivo(mac);
 
       return {
         id: idx + 1,
