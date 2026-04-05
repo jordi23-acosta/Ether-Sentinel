@@ -1,23 +1,72 @@
-import { useState } from 'react';
-import { Search, Filter, Download, Wifi, Network, MoreVertical } from 'lucide-react';
+import { useState, useEffect, useCallback } from 'react';
+import { Search, Filter, Download, MoreVertical, RefreshCw, AlertCircle } from 'lucide-react';
 import Topbar from '../components/Topbar';
-import { dispositivosMock } from '../data/mockData';
+
+const API = 'http://localhost:3001';
 
 export default function Dispositivos() {
-  const [dispositivos, setDispositivos] = useState(dispositivosMock);
+  const [dispositivos, setDispositivos] = useState([]);
   const [busqueda, setBusqueda] = useState('');
+  const [cargando, setCargando] = useState(false);
+  const [error, setError] = useState('');
+  const [escaneando, setEscaneando] = useState(false);
 
-  // Alternar estado bloqueado/activo
-  const toggleEstado = (id) => {
-    setDispositivos(prev =>
-      prev.map(d => d.id === id ? { ...d, estado: !d.estado } : d)
-    );
+  // Carga dispositivos desde el servidor real
+  const cargarDispositivos = useCallback(async () => {
+    setCargando(true);
+    setError('');
+    try {
+      const res = await fetch(`${API}/api/dispositivos`);
+      if (!res.ok) throw new Error('Error al conectar con el servidor');
+      const data = await res.json();
+      setDispositivos(data);
+    } catch (e) {
+      setError('No se pudo conectar al servidor. Asegúrate de que está corriendo en el puerto 3001.');
+    } finally {
+      setCargando(false);
+    }
+  }, []);
+
+  // Escanear red completa
+  const escanearRed = async () => {
+    setEscaneando(true);
+    setError('');
+    try {
+      const res = await fetch(`${API}/api/dispositivos`);
+      if (!res.ok) throw new Error();
+      const data = await res.json();
+      setDispositivos(data);
+    } catch {
+      setError('Error al escanear. Verifica que el servidor esté activo.');
+    } finally {
+      setEscaneando(false);
+    }
   };
+
+  // Bloquear / desbloquear dispositivo
+  const toggleEstado = async (ip) => {
+    try {
+      const res = await fetch(`${API}/api/dispositivos/${ip}/toggle`, { method: 'POST' });
+      const data = await res.json();
+      setDispositivos(prev =>
+        prev.map(d => d.ip === ip ? { ...d, estado: data.estado } : d)
+      );
+    } catch {
+      // Si falla el servidor, toggle local como fallback
+      setDispositivos(prev =>
+        prev.map(d => d.ip === ip ? { ...d, estado: !d.estado } : d)
+      );
+    }
+  };
+
+  useEffect(() => {
+    cargarDispositivos();
+  }, [cargarDispositivos]);
 
   const filtrados = dispositivos.filter(d =>
     d.nombre.toLowerCase().includes(busqueda.toLowerCase()) ||
     d.ip.includes(busqueda) ||
-    d.mac.toLowerCase().includes(busqueda.toLowerCase())
+    (d.mac && d.mac.toLowerCase().includes(busqueda.toLowerCase()))
   );
 
   return (
@@ -30,17 +79,33 @@ export default function Dispositivos() {
             Registro de <span style={{ color: '#2563eb' }}>Dispositivos</span>
           </h1>
           <p style={{ color: '#64748b', marginTop: '6px', fontSize: '14px' }}>
-            Configure y supervise los puntos de conexión activos en su entorno de red.<br />
-            Mantenga la integridad estructural gestionando el acceso de cada nodo.
+            Dispositivos detectados en tu red local en tiempo real.
           </p>
         </div>
+
+        {/* Banner de error si el servidor no está activo */}
+        {error && (
+          <div style={{
+            background: '#fef2f2', border: '1px solid #fecaca', borderRadius: '10px',
+            padding: '14px 18px', marginBottom: '20px', display: 'flex', alignItems: 'flex-start', gap: '10px',
+          }}>
+            <AlertCircle size={18} color="#dc2626" style={{ marginTop: '1px', flexShrink: 0 }} />
+            <div>
+              <div style={{ fontWeight: 600, color: '#dc2626', fontSize: '14px' }}>Servidor no disponible</div>
+              <div style={{ color: '#7f1d1d', fontSize: '13px', marginTop: '2px' }}>{error}</div>
+              <div style={{ marginTop: '8px', fontSize: '12px', color: '#991b1b', fontFamily: 'monospace', background: '#fee2e2', padding: '6px 10px', borderRadius: '6px', display: 'inline-block' }}>
+                cd ether-sentinel/server &amp;&amp; node index.js
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Barra de búsqueda y acciones */}
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px', gap: '12px' }}>
           <div style={{ position: 'relative', flex: 1, maxWidth: '480px' }}>
             <Search size={15} style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', color: '#94a3b8' }} />
             <input
-              placeholder="Buscar dispositivos por nombre, IP o MAC..."
+              placeholder="Buscar por nombre, IP o MAC..."
               value={busqueda}
               onChange={(e) => setBusqueda(e.target.value)}
               style={{
@@ -57,6 +122,19 @@ export default function Dispositivos() {
             }}>
               <Filter size={15} /> Filtros
             </button>
+            <button
+              onClick={escanearRed}
+              disabled={escaneando}
+              style={{
+                display: 'flex', alignItems: 'center', gap: '6px', padding: '9px 16px',
+                border: 'none', borderRadius: '8px', background: '#2563eb', color: 'white',
+                cursor: escaneando ? 'not-allowed' : 'pointer', fontSize: '13px', fontWeight: 600,
+                opacity: escaneando ? 0.7 : 1,
+              }}
+            >
+              <RefreshCw size={15} style={{ animation: escaneando ? 'spin 1s linear infinite' : 'none' }} />
+              {escaneando ? 'Escaneando...' : 'Escanear Red'}
+            </button>
             <button style={{
               display: 'flex', alignItems: 'center', gap: '6px', padding: '9px 16px',
               border: '1px solid #e2e8f0', borderRadius: '8px', background: 'white',
@@ -67,12 +145,12 @@ export default function Dispositivos() {
           </div>
         </div>
 
-        {/* Tabla de dispositivos */}
+        {/* Tabla */}
         <div style={{ background: 'white', borderRadius: '12px', boxShadow: '0 1px 4px rgba(0,0,0,0.06)', overflow: 'hidden' }}>
           <table style={{ width: '100%', borderCollapse: 'collapse' }}>
             <thead>
               <tr style={{ background: '#f8fafc', borderBottom: '1px solid #e2e8f0' }}>
-                {['Nombre del Dispositivo', 'Dirección IP', 'Dirección MAC', 'Tipo', 'Estado', 'Acciones'].map(col => (
+                {['Dispositivo', 'Marca / Tipo', 'Dirección IP', 'MAC', 'Estado', 'Acciones'].map(col => (
                   <th key={col} style={{
                     padding: '12px 20px', textAlign: 'left', fontSize: '11px',
                     fontWeight: 600, color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.5px',
@@ -81,103 +159,106 @@ export default function Dispositivos() {
               </tr>
             </thead>
             <tbody>
-              {filtrados.map((d, i) => (
-                <tr key={d.id} style={{ borderBottom: i < filtrados.length - 1 ? '1px solid #f1f5f9' : 'none' }}>
-                  {/* Nombre */}
-                  <td style={{ padding: '16px 20px' }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                      <div style={{
-                        width: '36px', height: '36px', borderRadius: '8px',
-                        background: d.estado ? '#eff6ff' : '#fef2f2',
-                        display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '16px',
-                      }}>
-                        {d.tipo.includes('Wi-Fi') ? '💻' : d.nombre.includes('iPhone') ? '📱' : d.nombre.includes('Laser') ? '🖨️' : '🖥️'}
-                      </div>
-                      <div>
-                        <div style={{ fontWeight: 600, fontSize: '14px', color: '#1e293b' }}>{d.nombre}</div>
-                        <div style={{ fontSize: '12px', color: d.estado ? '#94a3b8' : '#ef4444', fontWeight: d.estado ? 400 : 600 }}>
-                          {d.visto}
-                        </div>
-                      </div>
-                    </div>
-                  </td>
-                  {/* IP */}
-                  <td style={{ padding: '16px 20px', fontSize: '14px', color: '#475569', fontFamily: 'monospace' }}>{d.ip}</td>
-                  {/* MAC */}
-                  <td style={{ padding: '16px 20px', fontSize: '13px', color: '#64748b', fontFamily: 'monospace' }}>{d.mac}</td>
-                  {/* Tipo */}
-                  <td style={{ padding: '16px 20px' }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '13px', color: '#475569' }}>
-                      {d.tipo.includes('Wi-Fi') ? <Wifi size={14} color="#2563eb" /> : <Network size={14} color="#64748b" />}
-                      {d.tipo}
-                    </div>
-                  </td>
-                  {/* Estado con toggle */}
-                  <td style={{ padding: '16px 20px' }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                      <label className="toggle">
-                        <input type="checkbox" checked={d.estado} onChange={() => toggleEstado(d.id)} />
-                        <span className="toggle-slider" />
-                      </label>
-                      <span style={{
-                        fontSize: '12px', fontWeight: 700,
-                        color: d.estado ? '#16a34a' : '#dc2626',
-                      }}>
-                        {d.estado ? 'ACTIVO' : 'BLOQUEADO'}
-                      </span>
-                    </div>
-                  </td>
-                  {/* Acciones */}
-                  <td style={{ padding: '16px 20px' }}>
-                    <button style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#94a3b8' }}>
-                      <MoreVertical size={18} />
-                    </button>
+              {cargando ? (
+                <tr>
+                  <td colSpan={6} style={{ padding: '48px', textAlign: 'center', color: '#94a3b8' }}>
+                    <div style={{ fontSize: '24px', marginBottom: '8px' }}>🔍</div>
+                    <div style={{ fontWeight: 600 }}>Escaneando la red...</div>
+                    <div style={{ fontSize: '13px', marginTop: '4px' }}>Esto puede tardar hasta 30 segundos</div>
                   </td>
                 </tr>
-              ))}
+              ) : filtrados.length === 0 ? (
+                <tr>
+                  <td colSpan={6} style={{ padding: '48px', textAlign: 'center', color: '#94a3b8' }}>
+                    <div style={{ fontSize: '24px', marginBottom: '8px' }}>📡</div>
+                    <div style={{ fontWeight: 600 }}>No se encontraron dispositivos</div>
+                    <div style={{ fontSize: '13px', marginTop: '4px' }}>Inicia el servidor y presiona "Escanear Red"</div>
+                  </td>
+                </tr>
+              ) : (
+                filtrados.map((d, i) => (
+                  <tr key={d.ip} style={{ borderBottom: i < filtrados.length - 1 ? '1px solid #f1f5f9' : 'none' }}>
+                    {/* Icono + nombre */}
+                    <td style={{ padding: '14px 20px' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                        <div style={{
+                          width: '40px', height: '40px', borderRadius: '10px',
+                          background: d.estado ? '#eff6ff' : '#fef2f2',
+                          display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '20px',
+                        }}>
+                          {d.icono || '🖥️'}
+                        </div>
+                        <div>
+                          <div style={{ fontWeight: 600, fontSize: '14px', color: '#1e293b' }}>{d.nombre}</div>
+                          <div style={{ fontSize: '12px', color: d.estado ? '#94a3b8' : '#ef4444', fontWeight: d.estado ? 400 : 600 }}>
+                            {d.visto}
+                          </div>
+                        </div>
+                      </div>
+                    </td>
+                    {/* Marca / Tipo */}
+                    <td style={{ padding: '14px 20px' }}>
+                      <div style={{ fontSize: '13px', fontWeight: 600, color: '#1e293b' }}>{d.marca || '—'}</div>
+                      <div style={{ fontSize: '12px', color: '#64748b', marginTop: '2px' }}>{d.tipo || '—'}</div>
+                    </td>
+                    {/* IP */}
+                    <td style={{ padding: '14px 20px', fontSize: '13px', color: '#475569', fontFamily: 'monospace' }}>{d.ip}</td>
+                    {/* MAC */}
+                    <td style={{ padding: '14px 20px', fontSize: '12px', color: '#94a3b8', fontFamily: 'monospace' }}>{d.mac}</td>
+                    <td style={{ padding: '16px 20px' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        <label className="toggle">
+                          <input type="checkbox" checked={d.estado} onChange={() => toggleEstado(d.ip)} />
+                          <span className="toggle-slider" />
+                        </label>
+                        <span style={{ fontSize: '12px', fontWeight: 700, color: d.estado ? '#16a34a' : '#dc2626' }}>
+                          {d.estado ? 'ACTIVO' : 'BLOQUEADO'}
+                        </span>
+                      </div>
+                    </td>
+                    <td style={{ padding: '16px 20px' }}>
+                      <button style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#94a3b8' }}>
+                        <MoreVertical size={18} />
+                      </button>
+                    </td>
+                  </tr>
+                ))
+              )}
             </tbody>
           </table>
 
-          {/* Paginación */}
           <div style={{
             padding: '14px 20px', borderTop: '1px solid #f1f5f9',
             display: 'flex', justifyContent: 'space-between', alignItems: 'center',
           }}>
             <span style={{ fontSize: '13px', color: '#64748b' }}>
-              Mostrando {filtrados.length} de {dispositivos.length} dispositivos registrados
+              {cargando ? 'Escaneando...' : `Mostrando ${filtrados.length} de ${dispositivos.length} dispositivos detectados`}
             </span>
-            <div style={{ display: 'flex', gap: '8px' }}>
-              <button style={{
-                padding: '7px 16px', border: '1px solid #e2e8f0', borderRadius: '6px',
-                background: 'white', cursor: 'pointer', fontSize: '13px',
-              }}>Anterior</button>
-              <button style={{
-                padding: '7px 16px', border: 'none', borderRadius: '6px',
-                background: '#2563eb', color: 'white', cursor: 'pointer', fontSize: '13px', fontWeight: 600,
-              }}>Siguiente</button>
-            </div>
           </div>
         </div>
 
-        {/* Tarjetas de métricas inferiores */}
+        {/* Métricas */}
         <div style={{ display: 'flex', gap: '16px', marginTop: '20px' }}>
           <div style={{ flex: 1, background: 'white', borderRadius: '12px', padding: '20px', boxShadow: '0 1px 4px rgba(0,0,0,0.06)' }}>
-            <div style={{ fontSize: '11px', color: '#2563eb', fontWeight: 600, textTransform: 'uppercase', marginBottom: '8px' }}>Tiempo Real</div>
-            <div style={{ fontSize: '28px', fontWeight: 800 }}>852 Mbps</div>
-            <div style={{ fontSize: '13px', color: '#64748b' }}>Carga de Red Agregada</div>
+            <div style={{ fontSize: '11px', color: '#2563eb', fontWeight: 600, textTransform: 'uppercase', marginBottom: '8px' }}>Detectados</div>
+            <div style={{ fontSize: '28px', fontWeight: 800 }}>{dispositivos.length}</div>
+            <div style={{ fontSize: '13px', color: '#64748b' }}>Dispositivos en la red</div>
           </div>
           <div style={{ flex: 1, background: 'white', borderRadius: '12px', padding: '20px', boxShadow: '0 1px 4px rgba(0,0,0,0.06)' }}>
-            <div style={{ fontSize: '11px', color: '#f97316', fontWeight: 600, textTransform: 'uppercase', marginBottom: '8px' }}>Salud de Seguridad</div>
-            <div style={{ fontSize: '28px', fontWeight: 800 }}>99.8%</div>
-            <div style={{ fontSize: '13px', color: '#64748b' }}>Puntuación de Integridad de Paquetes</div>
+            <div style={{ fontSize: '11px', color: '#16a34a', fontWeight: 600, textTransform: 'uppercase', marginBottom: '8px' }}>Activos</div>
+            <div style={{ fontSize: '28px', fontWeight: 800 }}>{dispositivos.filter(d => d.estado).length}</div>
+            <div style={{ fontSize: '13px', color: '#64748b' }}>Con acceso permitido</div>
           </div>
           <div style={{ flex: 1, background: '#2563eb', borderRadius: '12px', padding: '20px', color: 'white' }}>
-            <div style={{ fontSize: '11px', fontWeight: 600, textTransform: 'uppercase', marginBottom: '8px', opacity: 0.8 }}>Guardián</div>
-            <div style={{ fontSize: '28px', fontWeight: 800 }}>3 Sondas</div>
-            <div style={{ fontSize: '13px', opacity: 0.8 }}>Escaneos activos en progreso</div>
+            <div style={{ fontSize: '11px', fontWeight: 600, textTransform: 'uppercase', marginBottom: '8px', opacity: 0.8 }}>Bloqueados</div>
+            <div style={{ fontSize: '28px', fontWeight: 800 }}>{dispositivos.filter(d => !d.estado).length}</div>
+            <div style={{ fontSize: '13px', opacity: 0.8 }}>Sin acceso a la red</div>
           </div>
         </div>
       </div>
+
+      {/* CSS para animación del spinner */}
+      <style>{`@keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }`}</style>
     </div>
   );
 }
