@@ -1,6 +1,68 @@
 import { useState, useEffect, useCallback } from 'react';
-import { Search, Filter, Download, MoreVertical, RefreshCw, AlertCircle } from 'lucide-react';
+import { Search, Filter, Download, MoreVertical, RefreshCw, AlertCircle, Pencil, Check, X } from 'lucide-react';
 import Topbar from '../components/Topbar';
+
+const API = 'http://localhost:3001';
+
+// Celda de nombre editable inline
+function NombreEditable({ dispositivo, onGuardar }) {
+  const [editando, setEditando] = useState(false);
+  const [valor, setValor] = useState(dispositivo.nombre);
+
+  const guardar = async () => {
+    const nombre = valor.trim();
+    if (!nombre) { setValor(dispositivo.nombre); setEditando(false); return; }
+    try {
+      await fetch(`${API}/api/dispositivos/${dispositivo.ip}/nombre`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ nombre }),
+      });
+      onGuardar(dispositivo.ip, nombre);
+    } catch { /* fallback local */ onGuardar(dispositivo.ip, nombre); }
+    setEditando(false);
+  };
+
+  const cancelar = () => { setValor(dispositivo.nombre); setEditando(false); };
+
+  if (editando) {
+    return (
+      <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+        <input
+          autoFocus
+          value={valor}
+          onChange={(e) => setValor(e.target.value)}
+          onKeyDown={(e) => { if (e.key === 'Enter') guardar(); if (e.key === 'Escape') cancelar(); }}
+          style={{
+            padding: '4px 8px', border: '2px solid #2563eb', borderRadius: '6px',
+            fontSize: '13px', outline: 'none', width: '160px',
+          }}
+        />
+        <button onClick={guardar} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#16a34a' }}>
+          <Check size={15} />
+        </button>
+        <button onClick={cancelar} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#ef4444' }}>
+          <X size={15} />
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+      <span style={{ fontWeight: 600, fontSize: '14px', color: '#1e293b' }}>{dispositivo.nombre}</span>
+      <button
+        onClick={() => { setValor(dispositivo.nombre); setEditando(true); }}
+        title="Editar nombre"
+        style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#cbd5e1', padding: '2px' }}
+        onMouseEnter={(e) => e.currentTarget.style.color = '#2563eb'}
+        onMouseLeave={(e) => e.currentTarget.style.color = '#cbd5e1'}
+      >
+        <Pencil size={13} />
+      </button>
+    </div>
+  );
+}
 
 const API = 'http://localhost:3001';
 
@@ -59,11 +121,14 @@ export default function Dispositivos() {
     }
   };
 
+  // Actualizar nombre localmente tras guardar
+  const actualizarNombre = useCallback((ip, nombre) => {
+    setDispositivos(prev => prev.map(d => d.ip === ip ? { ...d, nombre } : d));
+  }, []);
+
   useEffect(() => {
     cargarDispositivos();
   }, [cargarDispositivos]);
-
-  const filtrados = dispositivos.filter(d =>
     d.nombre.toLowerCase().includes(busqueda.toLowerCase()) ||
     d.ip.includes(busqueda) ||
     (d.mac && d.mac.toLowerCase().includes(busqueda.toLowerCase()))
@@ -178,18 +243,19 @@ export default function Dispositivos() {
               ) : (
                 filtrados.map((d, i) => (
                   <tr key={d.ip} style={{ borderBottom: i < filtrados.length - 1 ? '1px solid #f1f5f9' : 'none' }}>
-                    {/* Icono + nombre */}
+                    {/* Icono + nombre editable */}
                     <td style={{ padding: '14px 20px' }}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
                         <div style={{
                           width: '40px', height: '40px', borderRadius: '10px',
                           background: d.estado ? '#eff6ff' : '#fef2f2',
                           display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '20px',
+                          flexShrink: 0,
                         }}>
                           {d.icono || '🖥️'}
                         </div>
                         <div>
-                          <div style={{ fontWeight: 600, fontSize: '14px', color: '#1e293b' }}>{d.nombre}</div>
+                          <NombreEditable dispositivo={d} onGuardar={actualizarNombre} />
                           <div style={{ fontSize: '12px', color: d.estado ? '#94a3b8' : '#ef4444', fontWeight: d.estado ? 400 : 600 }}>
                             {d.visto}
                           </div>

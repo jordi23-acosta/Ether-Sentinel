@@ -334,7 +334,9 @@ app.get('/api/dispositivos', async (req, res) => {
 
       return {
         id: idx + 1,
-        nombre: info.nombre,
+        nombre: nombresPersonalizados.get(ip) || info.nombre,
+        nombreOriginal: info.nombre,
+        nombrePersonalizado: nombresPersonalizados.has(ip),
         marca: info.marca,
         tipo: info.tipo,
         icono: info.icono,
@@ -352,7 +354,19 @@ app.get('/api/dispositivos', async (req, res) => {
   res.json(dispositivos);
 });
 
-// POST /api/dispositivos/:ip/toggle
+// Nombres personalizados por IP (persisten mientras el server corra)
+const nombresPersonalizados = new Map();
+
+// PATCH /api/dispositivos/:ip/nombre — guardar nombre personalizado
+app.patch('/api/dispositivos/:ip/nombre', (req, res) => {
+  const { ip } = req.params;
+  const { nombre } = req.body;
+  if (!nombre || !nombre.trim()) return res.status(400).json({ error: 'Nombre vacío' });
+  nombresPersonalizados.set(ip, nombre.trim());
+  res.json({ ok: true, ip, nombre: nombre.trim() });
+});
+
+
 app.post('/api/dispositivos/:ip/toggle', (req, res) => {
   const { ip } = req.params;
   if (bloqueados.has(ip)) {
