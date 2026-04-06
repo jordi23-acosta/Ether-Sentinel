@@ -198,25 +198,58 @@ function deducirTipo(fabricante) {
   return { tipo: 'Dispositivo', icono: '🖥️' };
 }
 
-// Consulta la API pública de macvendors.com (sin API key, 1000 req/día gratis)
+// Consulta la API pública de macvendors.com con caché y rate limit
 async function lookupMacOnline(mac) {
+  const oui = mac.toUpperCase().replace(/-/g, ':').substring(0, 8);
+
+  // Devolver desde caché si ya fue consultada
+  if (macCache.has(oui)) return macCache.get(oui);
+
   try {
-    const oui = mac.toUpperCase().replace(/-/g, ':').substring(0, 8);
-    const res = await fetch(`https://api.macvendors.com/${oui}`, { signal: AbortSignal.timeout(3000) });
-    if (!res.ok) return null;
+    await sleep(1200); // respetar rate limit: máx ~1 req/seg
+    const res = await fetch(`https://api.macvendors.com/${oui}`, { signal: AbortSignal.timeout(4000) });
+
+    if (res.status === 429) {
+      console.log(`   ⚠️  Rate limit alcanzado para ${oui}, reintentando en 3s...`);
+      await sleep(3000);
+      const res2 = await fetch(`https://api.macvendors.com/${oui}`, { signal: AbortSignal.timeout(4000) });
+      if (!res2.ok) { macCache.set(oui, null); return null; }
+      const fabricante = (await res2.text()).trim();
+      const result = buildResult(fabricante);
+      macCache.set(oui, result);
+      return result;
+    }
+
+    if (!res.ok) { macCache.set(oui, null); return null; }
     const fabricante = (await res.text()).trim();
-    if (!fabricante || fabricante.includes('errors')) return null;
-    const { tipo, icono } = deducirTipo(fabricante);
-    return { marca: fabricante, tipo, icono, nombre: `${fabricante} (${tipo})` };
+    if (!fabricante || fabricante.includes('errors')) { macCache.set(oui, null); return null; }
+    const result = buildResult(fabricante);
+    macCache.set(oui, result);
+    return result;
   } catch {
+    macCache.set(oui, null);
     return null;
   }
 }
 
+function buildResult(fabricante) {
+  const { tipo, icono } = deducirTipo(fabricante);
+  // Acortar nombres muy largos
+  const marca = fabricante.length > 30 ? fabricante.substring(0, 30) + '...' : fabricante;
+  return { marca, tipo, icono, nombre: `${marca}` };
+}
+
 async function identificarDispositivo(mac) {
   if (!mac || mac === 'N/A') {
-    return { marca: 'Desconocido', tipo: 'Dispositivo', icono: '❓', nombre: 'Dispositivo Desconocido' };
+    return { marca: 'Sin MAC', tipo: 'Dispositivo', icono: '❓', nombre: 'Dispositivo Desconocido' };
   }
+
+  // Detectar MAC aleatoria (bit LAA activo = privacidad del SO)
+  const primerOcteto = parseInt(mac.split(':')[0], 16);
+  if (primerOcteto & 2) {
+    return { marca: 'MAC Aleatoria', tipo: 'Privacidad activada', icono: '🔒', nombre: 'Dispositivo (MAC privada)' };
+  }
+
   // 1. Buscar en DB local (instantáneo)
   const local = identificarLocal(mac);
   if (local) return { marca: local.marca, tipo: local.tipo, icono: local.icono, nombre: `${local.marca} ${local.tipo}` };
@@ -259,6 +292,12 @@ function getMac(ip) {
     });
   });
 }
+
+// Caché de MACs ya consultadas (evita repetir llamadas a la API)
+const macCache = new Map();
+
+// Espera N milisegundos
+const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
 // Estado en memoria para bloqueos
 const bloqueados = new Set();
