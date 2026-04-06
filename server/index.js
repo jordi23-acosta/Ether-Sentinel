@@ -384,6 +384,101 @@ app.get('/api/red', (req, res) => {
   res.json({ subnet, myIp, activa: true });
 });
 
+// ─────────────────────────────────────────────
+// CONTROL DE CONTENIDO — archivo hosts real
+// ─────────────────────────────────────────────
+const fs = require('fs');
+const HOSTS_PATH = 'C:\\Windows\\System32\\drivers\\etc\\hosts';
+const MARKER_START = '# === ETHER SENTINEL START ===';
+const MARKER_END   = '# === ETHER SENTINEL END ===';
+
+// Lee los dominios bloqueados actualmente en el archivo hosts
+function leerBloqueadosHosts() {
+  try {
+    const contenido = fs.readFileSync(HOSTS_PATH, 'utf8');
+    const inicio = contenido.indexOf(MARKER_START);
+    const fin    = contenido.indexOf(MARKER_END);
+    if (inicio === -1 || fin === -1) return [];
+    const bloque = contenido.substring(inicio + MARKER_START.length, fin);
+    return bloque.split('\n')
+      .map(l => l.trim())
+      .filter(l => l.startsWith('0.0.0.0'))
+      .map(l => l.replace('0.0.0.0', '').trim());
+  } catch { return []; }
+}
+
+// Escribe la lista de dominios bloqueados en el archivo hosts
+function escribirHosts(dominios) {
+  try {
+    let contenido = fs.readFileSync(HOSTS_PATH, 'utf8');
+    // Eliminar bloque anterior si existe
+    const inicio = contenido.indexOf(MARKER_START);
+    const fin    = contenido.indexOf(MARKER_END);
+    if (inicio !== -1 && fin !== -1) {
+      contenido = contenido.substring(0, inicio) + contenido.substring(fin + MARKER_END.length);
+    }
+    contenido = contenido.trimEnd();
+    if (dominios.length > 0) {
+      const lineas = dominios.map(d => `0.0.0.0 ${d}\n0.0.0.0 www.${d}`).join('\n');
+      contenido += `\n\n${MARKER_START}\n${lineas}\n${MARKER_END}\n`;
+    }
+    fs.writeFileSync(HOSTS_PATH, contenido, 'utf8');
+    // Limpiar caché DNS de Windows
+    exec('ipconfig /flushdns', () => {});
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, error: e.message };
+  }
+}
+
+// GET /api/contenido — devuelve listas actuales
+app.get('/api/contenido', (req, res) => {
+  res.json({
+    bloqueados: leerBloqueadosHosts(),
+    permitidos: contenidoPermitidos,
+  });
+});
+
+// Estado en memoria para permitidos (hosts no los necesita)
+let contenidoPermitidos = ['google.com', 'aws.amazon.com', 'github.com'];
+
+// POST /api/contenido/bloquear
+app.post('/api/contenido/bloquear', (req, res) => {
+  const { dominio } = req.body;
+  if (!dominio) return res.status(400).json({ error: 'Dominio requerido' });
+  const lista = leerBloqueadosHosts();
+  if (!lista.includes(dominio)) lista.push(dominio);
+  const result = escribirHosts(lista);
+  if (!result.ok) return res.status(500).json({ error: 'Sin permisos de administrador. Ejecuta el servidor como admin.', detalle: result.error });
+  console.log(`🚫 Bloqueado: ${dominio}`);
+  res.json({ ok: true, bloqueados: lista });
+});
+
+// DELETE /api/contenido/bloquear/:dominio
+app.delete('/api/contenido/bloquear/:dominio', (req, res) => {
+  const dominio = decodeURIComponent(req.params.dominio);
+  const lista = leerBloqueadosHosts().filter(d => d !== dominio);
+  const result = escribirHosts(lista);
+  if (!result.ok) return res.status(500).json({ error: 'Sin permisos de administrador.', detalle: result.error });
+  console.log(`✅ Desbloqueado: ${dominio}`);
+  res.json({ ok: true, bloqueados: lista });
+});
+
+// POST /api/contenido/permitir
+app.post('/api/contenido/permitir', (req, res) => {
+  const { dominio } = req.body;
+  if (!dominio) return res.status(400).json({ error: 'Dominio requerido' });
+  if (!contenidoPermitidos.includes(dominio)) contenidoPermitidos.push(dominio);
+  res.json({ ok: true, permitidos: contenidoPermitidos });
+});
+
+// DELETE /api/contenido/permitir/:dominio
+app.delete('/api/contenido/permitir/:dominio', (req, res) => {
+  const dominio = decodeURIComponent(req.params.dominio);
+  contenidoPermitidos = contenidoPermitidos.filter(d => d !== dominio);
+  res.json({ ok: true, permitidos: contenidoPermitidos });
+});
+
 const PORT = 3001;
 app.listen(PORT, () => {
   console.log(`\n🛡️  Ether Sentinel Server → http://localhost:${PORT}\n`);
